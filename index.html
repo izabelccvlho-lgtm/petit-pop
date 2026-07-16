@@ -218,10 +218,51 @@
   .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
   .warn{font-size:11px;color:var(--muted);text-align:center;margin-top:18px;line-height:1.5}
   .warn.err{color:var(--rasp);font-weight:600;font-size:12.5px}
+
+  /* Login */
+  .login{
+    position:fixed;inset:0;z-index:80;background:var(--cream);
+    display:flex;align-items:center;justify-content:center;padding:20px;
+  }
+  .login.off{display:none}
+  .login-card{
+    background:var(--surface);border-radius:24px;box-shadow:var(--shadow);
+    padding:32px 24px 26px;width:100%;max-width:380px;text-align:center;
+  }
+  .logo.big{width:60px;height:60px;border-radius:19px;font-size:30px;margin:0 auto 14px}
+  .login-card h1{font-family:'Fraunces',serif;font-weight:600;font-size:23px;letter-spacing:-.01em}
+  .login-sub{font-size:13px;color:var(--muted);margin:4px 0 22px}
+  .login-card .field{text-align:left}
+  .login-err{
+    font-size:12.5px;color:var(--rasp);font-weight:600;min-height:18px;margin:2px 0 10px;
+  }
+  .btn-logout{
+    display:block;margin:22px auto 0;background:none;border:none;
+    color:var(--muted);font-family:inherit;font-size:12.5px;font-weight:600;
+    cursor:pointer;text-decoration:underline;
+  }
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="login" id="login">
+  <div class="login-card">
+    <div class="logo big">🍿</div>
+    <h1>Petit Pop Gourmet</h1>
+    <p class="login-sub">Entre para ver os pedidos</p>
+    <div class="field">
+      <label>E-mail</label>
+      <input id="lEmail" type="email" inputmode="email" autocomplete="username" placeholder="seu@email.com">
+    </div>
+    <div class="field">
+      <label>Senha</label>
+      <input id="lPass" type="password" autocomplete="current-password" placeholder="••••••••">
+    </div>
+    <div class="login-err" id="lErr"></div>
+    <button class="btn-save" id="lBtn" onclick="doLogin()">Entrar</button>
+  </div>
+</div>
+
+<div class="wrap" id="app" style="display:none">
   <header>
     <div class="brand">
       <div class="logo">🍿</div>
@@ -259,6 +300,7 @@
   <div id="list"></div>
 
   <p class="warn" id="storageWarn"></p>
+  <button class="btn-logout" onclick="doLogout()">Sair</button>
 </div>
 
 <!-- Order sheet -->
@@ -439,7 +481,10 @@
     if(!db){ setStatus("Não foi possível conectar. Verifique sua internet e recarregue.","err"); return; }
     db.from("pedidos").select("*").eq("dia", hoje()).order("criado_em",{ascending:true})
       .then(function(res){
-        if(res.error){ setStatus("Erro ao carregar: "+res.error.message,"err"); return; }
+        if(res.error){
+          if(/jwt|expired|permission|denied/i.test(res.error.message)){ showLogin(); return; }
+          setStatus("Erro ao carregar: "+res.error.message,"err"); return;
+        }
         orders = (res.data||[]).map(fromRow);
         setStatus("");
         render();
@@ -701,13 +746,67 @@
   bn.addEventListener("blur",function(){ store.set("bizName", bn.textContent.trim()||"Petit Pop Gourmet"); });
   bn.addEventListener("keydown",function(e){ if(e.key==="Enter"){ e.preventDefault(); bn.blur(); } });
 
+  // ---- Login ----
+  var started = false;
+
+  function showApp(){
+    document.getElementById("login").classList.add("off");
+    document.getElementById("app").style.display = "";
+    if(started) return;
+    started = true;
+    setStatus("Carregando pedidos…");
+    render();
+    fetchOrders();
+    listen();
+  }
+  function showLogin(){
+    document.getElementById("login").classList.remove("off");
+    document.getElementById("app").style.display = "none";
+  }
+
+  window.doLogin=function(){
+    var email = document.getElementById("lEmail").value.trim();
+    var pass  = document.getElementById("lPass").value;
+    var err   = document.getElementById("lErr");
+    var btn   = document.getElementById("lBtn");
+    err.textContent = "";
+    if(!email || !pass){ err.textContent = "Preencha e-mail e senha."; return; }
+    btn.disabled = true; btn.textContent = "Entrando…";
+    db.auth.signInWithPassword({ email:email, password:pass }).then(function(res){
+      btn.disabled = false; btn.textContent = "Entrar";
+      if(res.error){
+        err.textContent = /invalid/i.test(res.error.message)
+          ? "E-mail ou senha incorretos."
+          : res.error.message;
+        return;
+      }
+      document.getElementById("lPass").value = "";
+      showApp();
+    });
+  };
+
+  window.doLogout=function(){
+    db.auth.signOut().then(function(){ location.reload(); });
+  };
+
+  document.getElementById("lPass").addEventListener("keydown", function(e){
+    if(e.key==="Enter") doLogin();
+  });
+  document.getElementById("lEmail").addEventListener("keydown", function(e){
+    if(e.key==="Enter") document.getElementById("lPass").focus();
+  });
+
   // ---- Início ----
-  setStatus("Carregando pedidos…");
-  render();
-  fetchOrders();
-  listen();
+  if(!db){
+    setStatus("Não foi possível conectar. Verifique sua internet e recarregue.","err");
+  }else{
+    db.auth.getSession().then(function(res){
+      if(res.data && res.data.session) showApp();
+      else showLogin();
+    });
+  }
   // recarrega ao voltar pro app (celular)
-  document.addEventListener("visibilitychange", function(){ if(!document.hidden) fetchOrders(); });
+  document.addEventListener("visibilitychange", function(){ if(!document.hidden && started) fetchOrders(); });
 })();
 </script>
 </body>
