@@ -155,6 +155,16 @@
   .field{margin-bottom:14px}
   .field label{display:block;font-size:12.5px;font-weight:600;color:var(--cocoa-soft);margin-bottom:6px}
   .field .hint{font-size:11.5px;color:var(--muted);margin-top:6px;line-height:1.45}
+  .cupons{display:flex;gap:7px;flex-wrap:wrap}
+  .cupom{
+    border:1.5px solid var(--line);background:var(--cream);border-radius:11px;padding:8px 12px;
+    font-size:12.5px;font-weight:600;font-family:inherit;color:var(--cocoa-soft);cursor:pointer;
+    transition:all .12s ease;
+  }
+  .cupom:active{transform:scale(.96)}
+  .cupom:hover{border-color:var(--rasp);color:var(--rasp)}
+  .cupom.off{color:var(--muted)}
+  .sheet-total .disc{font-size:12px;color:var(--rasp);font-weight:700;display:block;margin-top:2px}
   .field input,.field select,.field textarea{
     width:100%;border:1.5px solid var(--line);border-radius:12px;padding:12px 13px;
     font-family:inherit;font-size:15px;color:var(--cocoa);background:var(--cream);
@@ -287,6 +297,17 @@
       <label>Frete (R$)</label>
       <input id="fFreight" inputmode="decimal" placeholder="0,00" oninput="recalc()">
     </div>
+    <div class="field">
+      <label>Desconto (R$)</label>
+      <input id="fDisc" inputmode="decimal" placeholder="0,00" oninput="recalc()">
+    </div>
+  </div>
+
+  <div class="field">
+    <div class="cupons">
+      <button class="cupom" onclick="setDisc(5)">🎟️ Cupom 1ª compra · R$ 5,00</button>
+      <button class="cupom off" onclick="setDisc(0)">Sem desconto</button>
+    </div>
   </div>
 
   <div class="field">
@@ -397,14 +418,15 @@
   // linha do banco -> objeto do app
   function fromRow(r){
     return { id:r.id, name:r.nome, phone:r.telefone||"", items:r.itens||"",
-             value:Number(r.valor)||0, freight:Number(r.frete)||0,
+             value:Number(r.valor)||0, freight:Number(r.frete)||0, disc:Number(r.desconto)||0,
              pay:r.pagamento||"Pix", time:r.hora||"", done:!!r.entregue };
   }
   // objeto do app -> linha do banco
   function toRow(o){
     return { id:o.id, dia:hoje(), nome:o.name, telefone:o.phone, itens:o.items,
-             valor:o.value, frete:o.freight, pagamento:o.pay, hora:o.time, entregue:o.done };
+             valor:o.value, frete:o.freight, desconto:o.disc||0, pagamento:o.pay, hora:o.time, entregue:o.done };
   }
+  function totalOf(o){ return (o.value||0) + (o.freight||0) - (o.disc||0); }
 
   function setStatus(txt, cls){
     var el=document.getElementById("storageWarn");
@@ -451,7 +473,7 @@
 
   function render(){
     var total=0, freight=0, pend=0;
-    orders.forEach(function(o){ total+=o.value+o.freight; freight+=o.freight; if(!o.done)pend++; });
+    orders.forEach(function(o){ total+=totalOf(o); freight+=o.freight; if(!o.done)pend++; });
     document.getElementById("statTotal").textContent = brl(total);
     document.getElementById("statCount").textContent = orders.length;
     document.getElementById("statFreight").textContent = brl(freight);
@@ -486,7 +508,7 @@
       return '<div class="order'+(o.done?' done':'')+'">'
         + '<div class="order-head"><div class="order-name">'+esc(o.name)+'</div><div class="order-time">'+esc(o.time)+'</div></div>'
         + '<div class="order-items">'+esc(o.items||"—")+'</div>'
-        + '<div class="order-foot"><div><span class="order-total">'+brl(o.value+o.freight)+'</span><span class="pay">'+esc(o.pay)+'</span></div>'+badge+'</div>'
+        + '<div class="order-foot"><div><span class="order-total">'+brl(totalOf(o))+'</span><span class="pay">'+esc(o.pay)+'</span></div>'+badge+'</div>'
         + '<div class="order-tools">'
         +   toggle
         +   '<button class="tool wa" onclick="wa(\''+o.id+'\')">WhatsApp</button>'
@@ -521,6 +543,7 @@
     document.getElementById("fItems").value = o? o.items : "";
     document.getElementById("fValue").value = o? String(o.value).replace(".",",") : "";
     document.getElementById("fFreight").value = o? String(o.freight).replace(".",",") : "";
+    document.getElementById("fDisc").value = (o && o.disc) ? String(o.disc).replace(".",",") : "";
     pay = o? o.pay : "Pix";
     document.querySelectorAll("#payseg button").forEach(function(b){ b.classList.toggle("on", b.dataset.pay===pay); });
     renderCatalog(); recalc();
@@ -529,13 +552,15 @@
   };
   window.openReport=function(){
     var total=0,freight=0,net=0,done=0,pend=0,byPay={};
-    orders.forEach(function(o){ total+=o.value+o.freight; freight+=o.freight; net+=o.value; o.done?done++:pend++; byPay[o.pay]=(byPay[o.pay]||0)+(o.value+o.freight); });
+    var discs=0;
+    orders.forEach(function(o){ total+=totalOf(o); freight+=o.freight; net+=o.value; discs+=(o.disc||0); o.done?done++:pend++; byPay[o.pay]=(byPay[o.pay]||0)+totalOf(o); });
     var body="";
     body+=line("Pedidos", orders.length);
     body+=line("Entregues", done);
     body+=line("Pendentes", pend);
     body+=line("Produtos", brl(net));
     body+=line("Frete", brl(freight));
+    if(discs>0) body+=line("Descontos", "- "+brl(discs));
     Object.keys(byPay).forEach(function(k){ body+=line("• "+k, brl(byPay[k])); });
     body+='<div class="rep-line grand"><span>Total do dia</span><b>'+brl(total)+'</b></div>';
     document.getElementById("reportBody").innerHTML = body;
@@ -544,8 +569,14 @@
   function line(l,v){ return '<div class="rep-line"><span>'+l+'</span><b>'+v+'</b></div>'; }
 
   window.recalc=function(){
-    var t=num(document.getElementById("fValue").value)+num(document.getElementById("fFreight").value);
-    document.getElementById("sheetTotal").textContent = brl(t);
+    var d=num(document.getElementById("fDisc").value);
+    var t=num(document.getElementById("fValue").value)+num(document.getElementById("fFreight").value)-d;
+    if(t<0) t=0;
+    document.getElementById("sheetTotal").innerHTML = brl(t) + (d>0 ? '<span class="disc">desconto de '+brl(d)+'</span>' : '');
+  };
+  window.setDisc=function(v){
+    document.getElementById("fDisc").value = v? String(v.toFixed(2)).replace(".",",") : "";
+    recalc();
   };
   document.querySelectorAll("#payseg button").forEach(function(b){
     b.onclick=function(){ pay=b.dataset.pay; document.querySelectorAll("#payseg button").forEach(function(x){x.classList.remove("on");}); b.classList.add("on"); };
@@ -570,6 +601,7 @@
     o.items = document.getElementById("fItems").value.trim();
     o.value = num(document.getElementById("fValue").value);
     o.freight = num(document.getElementById("fFreight").value);
+    o.disc = num(document.getElementById("fDisc").value);
     o.pay = pay;
 
     // atualiza a tela na hora
@@ -609,14 +641,15 @@
   // ---- Pagamentos ----
   window.wa=function(id){
     var o=orders.find(function(x){return x.id===id;}); if(!o) return;
-    var total = brl(o.value+o.freight);
+    var total = brl(totalOf(o));
     var payTxt = "";
     if(o.pay==="Pix"){
       payTxt = "\n\n💠 *Pix ("+CFG.pixBank+")*\nChave: "+CFG.pixKey+"\nNome: "+CFG.pixName+"\nÉ só informar o valor "+total+" na hora de pagar 😊";
     }else if(o.pay==="Cartão" && CFG.cardLink){
       payTxt = "\n\n💳 *Pagamento no cartão*\nÉ só pagar por aqui: "+CFG.cardLink;
     }
-    var msg="Oi, "+o.name+"! 🍿\n\nSeu pedido:\n"+(o.items||"")+"\n\nTotal: "+total+"\nPagamento: "+o.pay+payTxt+"\n\nObrigada pela preferência! 💛";
+    var discTxt = (o.disc>0) ? "\nDesconto: -"+brl(o.disc) : "";
+    var msg="Oi, "+o.name+"! 🍿\n\nSeu pedido:\n"+(o.items||"")+discTxt+"\n\nTotal: "+total+"\nPagamento: "+o.pay+payTxt+"\n\nObrigada pela preferência! 💛";
     var digits=(o.phone||"").replace(/\D/g,"");
     if(digits && digits.length<=11) digits="55"+digits;
     var base = digits ? "https://wa.me/"+digits : "https://wa.me/";
