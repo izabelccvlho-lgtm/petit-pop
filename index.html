@@ -56,6 +56,18 @@
     letter-spacing:-.01em;cursor:text;
   }
   .brand .date{font-size:12.5px;color:var(--muted);font-weight:500;margin-top:1px}
+  .datewrap{position:relative;display:inline-block;margin-top:1px}
+  .datewrap .date{cursor:pointer;border-bottom:1px dashed var(--line);padding-bottom:1px}
+  .datewrap .date.past{color:var(--rasp)}
+  .datewrap input[type=date]{
+    position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;
+    border:none;background:transparent;font-family:inherit;
+  }
+  .backtoday{
+    margin-left:8px;border:none;background:var(--gold-soft);color:#7A5A1E;
+    border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;
+    font-family:inherit;cursor:pointer;vertical-align:2px;
+  }
 
   /* Stats */
   .stats{
@@ -268,7 +280,11 @@
       <div class="logo">🍿</div>
       <div>
         <h1 id="bizName" contenteditable="true" spellcheck="false">Petit Pop Gourmet</h1>
-        <div class="date" id="today"></div>
+        <div class="datewrap">
+          <span class="date" id="today"></span>
+          <input type="date" id="dPick" aria-label="Escolher data">
+        </div>
+        <button class="backtoday" id="backToday" style="display:none" onclick="goToday()">Hoje</button>
       </div>
     </div>
     <button class="gear" onclick="openConfig()" aria-label="Configurações">⚙️</button>
@@ -372,7 +388,7 @@
 <!-- Report sheet -->
 <div class="sheet" id="reportSheet">
   <div class="grab"></div>
-  <h2>Relatório de hoje</h2>
+  <h2 id="reportTitle">Relatório de hoje</h2>
   <div id="reportBody"></div>
   <button class="btn-save" style="margin-top:18px;background:var(--cocoa);box-shadow:none" onclick="closeAll()">Fechar</button>
 </div>
@@ -451,6 +467,9 @@
 
   // ---- Helpers ----
   function hoje(){ var d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+  // data que está sendo visualizada (por padrão, hoje)
+  var viewDate = hoje();
+  function isToday(){ return viewDate === hoje(); }
   function brl(n){ return "R$ " + (Number(n)||0).toFixed(2).replace(".",","); }
   function num(s){ return parseFloat(String(s).replace(/\./g,"").replace(",",".")) || 0; }
   function nowTime(){ var d=new Date(); return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"); }
@@ -459,13 +478,13 @@
 
   // linha do banco -> objeto do app
   function fromRow(r){
-    return { id:r.id, name:r.nome, phone:r.telefone||"", items:r.itens||"",
+    return { id:r.id, day:r.dia, name:r.nome, phone:r.telefone||"", items:r.itens||"",
              value:Number(r.valor)||0, freight:Number(r.frete)||0, disc:Number(r.desconto)||0,
              pay:r.pagamento||"Pix", time:r.hora||"", done:!!r.entregue };
   }
   // objeto do app -> linha do banco
   function toRow(o){
-    return { id:o.id, dia:hoje(), nome:o.name, telefone:o.phone, itens:o.items,
+    return { id:o.id, dia:o.day || viewDate, nome:o.name, telefone:o.phone, itens:o.items,
              valor:o.value, frete:o.freight, desconto:o.disc||0, pagamento:o.pay, hora:o.time, entregue:o.done };
   }
   function totalOf(o){ return (o.value||0) + (o.freight||0) - (o.disc||0); }
@@ -479,7 +498,7 @@
   // ---- Carregar do Supabase ----
   function fetchOrders(){
     if(!db){ setStatus("Não foi possível conectar. Verifique sua internet e recarregue.","err"); return; }
-    db.from("pedidos").select("*").eq("dia", hoje()).order("criado_em",{ascending:true})
+    db.from("pedidos").select("*").eq("dia", viewDate).order("criado_em",{ascending:true})
       .then(function(res){
         if(res.error){
           if(/jwt|expired|permission|denied/i.test(res.error.message)){ showLogin(); return; }
@@ -501,7 +520,7 @@
         if(payload.eventType === "DELETE"){
           orders = orders.filter(function(o){ return o.id !== row.id; });
         }else{
-          if(row.dia !== hoje()) return;
+          if(row.dia !== viewDate) return;
           var o = fromRow(row);
           var i = orders.findIndex(function(x){ return x.id === o.id; });
           if(i >= 0) orders[i] = o; else orders.push(o);
@@ -514,7 +533,30 @@
   // ---- Render ----
   var months=["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
   var days=["domingo","segunda","terça","quarta","quinta","sexta","sábado"];
-  (function(){ var d=new Date(); document.getElementById("today").textContent = days[d.getDay()]+", "+d.getDate()+" de "+months[d.getMonth()]; })();
+  // "2026-07-16" -> "quinta, 16 de julho" (sem passar por UTC)
+  function prettyDate(iso){
+    var p = iso.split("-");
+    var d = new Date(Number(p[0]), Number(p[1])-1, Number(p[2]));
+    return days[d.getDay()]+", "+d.getDate()+" de "+months[d.getMonth()];
+  }
+  function paintDate(){
+    var el = document.getElementById("today");
+    el.textContent = prettyDate(viewDate) + (isToday() ? "" : " ▾");
+    el.classList.toggle("past", !isToday());
+    document.getElementById("dPick").value = viewDate;
+    document.getElementById("backToday").style.display = isToday() ? "none" : "";
+  }
+  window.goToday = function(){ setViewDate(hoje()); };
+  function setViewDate(iso){
+    if(!iso || iso === viewDate) return;
+    viewDate = iso;
+    orders = [];
+    paintDate(); render();
+    setStatus("Carregando pedidos…");
+    fetchOrders();
+  }
+  document.getElementById("dPick").addEventListener("change", function(){ setViewDate(this.value); });
+  paintDate();
 
   function render(){
     var total=0, freight=0, pend=0;
@@ -539,7 +581,9 @@
     var list=document.getElementById("list");
     if(!view.length){
       list.innerHTML='<div class="empty"><div class="em">🍿</div><p>'+
-        (orders.length? "Nenhum pedido nesse filtro." : "Nenhum pedido hoje ainda.<br>Toque em <b>Novo pedido</b> pra começar.")+'</p></div>';
+        (orders.length ? "Nenhum pedido nesse filtro."
+          : (isToday() ? "Nenhum pedido hoje ainda.<br>Toque em <b>Novo pedido</b> pra começar."
+                       : "Nenhum pedido em "+prettyDate(viewDate)+"."))+'</p></div>';
       return;
     }
     list.innerHTML = view.slice().reverse().map(function(o){
@@ -596,6 +640,8 @@
     setTimeout(function(){ document.getElementById("fName").focus(); },250);
   };
   window.openReport=function(){
+    document.getElementById("reportTitle").textContent =
+      isToday() ? "Relatório de hoje" : "Relatório · " + prettyDate(viewDate);
     var total=0,freight=0,net=0,done=0,pend=0,byPay={};
     var discs=0;
     orders.forEach(function(o){ total+=totalOf(o); freight+=o.freight; net+=o.value; discs+=(o.disc||0); o.done?done++:pend++; byPay[o.pay]=(byPay[o.pay]||0)+totalOf(o); });
@@ -608,6 +654,7 @@
     if(discs>0) body+=line("Descontos", "- "+brl(discs));
     Object.keys(byPay).forEach(function(k){ body+=line("• "+k, brl(byPay[k])); });
     body+='<div class="rep-line grand"><span>Total do dia</span><b>'+brl(total)+'</b></div>';
+    if(!isToday()) body+='<div class="rep-line"><span style="color:var(--muted);font-size:12px">Dia '+viewDate.split("-").reverse().join("/")+'</span><b></b></div>';
     document.getElementById("reportBody").innerHTML = body;
     show("scrim"); show("reportSheet");
   };
